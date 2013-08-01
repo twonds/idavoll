@@ -18,9 +18,10 @@ from twisted.application import service
 from twisted.internet import defer, reactor
 from twisted.python import log
 from twisted.web import client
-from twisted.web2 import http, http_headers, resource, responsecode
-from twisted.web2 import channel, server
-from twisted.web2.stream import readStream
+
+from twisted.web import http, http_headers, resource
+from twisted.web import server
+
 from twisted.words.protocols.jabber.jid import JID
 from twisted.words.protocols.jabber.error import StanzaError
 from twisted.words.xish import domish
@@ -117,7 +118,7 @@ class WebStreamParser(object):
             else:
                 return self.document
 
-        d = readStream(stream, self.elementStream.parse)
+        d = defer.maybeDeferred(self.elementStream.parse, stream)
         d.addCallback(endOfStream)
         return d
 
@@ -145,7 +146,7 @@ class CreateResource(resource.Resource):
             uri = getXMPPURI(self.serviceJID, nodeIdentifier)
             stream = simplejson.dumps({'uri': uri})
             contentType = http_headers.MimeType.fromString(MIME_JSON)
-            return http.Response(responsecode.OK, stream=stream,
+            return http.Response(http.OK, stream=stream,
                                  headers={'Content-Type': contentType})
         d = self.backend.createNode(None, self.owner)
         d.addCallback(toResponse)
@@ -176,7 +177,7 @@ class DeleteResource(resource.Resource):
                 jid, nodeIdentifier = getServiceAndNode(request.args['uri'][0])
                 return defer.succeed(nodeIdentifier)
             else:
-                raise http.HTTPError(http.Response(responsecode.BAD_REQUEST,
+                raise http.HTTPError(http.Response(http.BAD_REQUEST,
                                                    "No URI given"))
 
         def doDelete(nodeIdentifier, data):
@@ -190,21 +191,21 @@ class DeleteResource(resource.Resource):
                                            redirectURI)
 
         def respond(result):
-            return http.Response(responsecode.NO_CONTENT)
+            return http.Response(http.NO_CONTENT)
 
 
         def trapNotFound(failure):
             failure.trap(error.NodeNotFound)
-            return http.StatusResponse(responsecode.NOT_FOUND,
+            return http.StatusResponse(http.NOT_FOUND,
                                        "Node not found")
 
         def trapXMPPURIParseError(failure):
             failure.trap(XMPPURIParseError)
-            return http.StatusResponse(responsecode.BAD_REQUEST,
+            return http.StatusResponse(http.BAD_REQUEST,
                     "Malformed XMPP URI: %s" % failure.value)
 
         data = []
-        d = readStream(request.stream, data.append)
+        d = defer.maybeDeferred(data.append, request.content.read())
         d.addCallback(gotStream)
         d.addCallback(doDelete, data)
         d.addCallback(respond)
@@ -229,12 +230,12 @@ class PublishResource(resource.Resource):
 
 
     def checkMediaType(self, request):
-        ctype = request.headers.getHeader('content-type')
+        ctype = request.received_headers.get('content-type')
 
         if not ctype:
             raise http.HTTPError(
                 http.StatusResponse(
-                    responsecode.BAD_REQUEST,
+                    http.BAD_REQUEST,
                     "No specified Media Type"))
 
         if (ctype.mediaType != 'application' or
@@ -243,7 +244,7 @@ class PublishResource(resource.Resource):
             ctype.params.get('charset', 'utf-8') != 'utf-8'):
             raise http.HTTPError(
                 http.StatusResponse(
-                    responsecode.UNSUPPORTED_MEDIA_TYPE,
+                    http.UNSUPPORTED_MEDIA_TYPE,
                     "Unsupported Media Type: %s" %
                         http_headers.generateContentType(ctype)))
 
@@ -262,7 +263,7 @@ class PublishResource(resource.Resource):
             uri = getXMPPURI(self.serviceJID, nodeIdentifier)
             stream = simplejson.dumps({'uri': uri})
             contentType = http_headers.MimeType.fromString(MIME_JSON)
-            return http.Response(responsecode.OK, stream=stream,
+            return http.Response(http.OK, stream=stream,
                                  headers={'Content-Type': contentType})
 
         def gotNode(nodeIdentifier, payload):
@@ -285,16 +286,16 @@ class PublishResource(resource.Resource):
 
         def trapNotFound(failure):
             failure.trap(error.NodeNotFound)
-            return http.StatusResponse(responsecode.NOT_FOUND,
+            return http.StatusResponse(http.NOT_FOUND,
                                        "Node not found")
 
         def trapXMPPURIParseError(failure):
             failure.trap(XMPPURIParseError)
-            return http.StatusResponse(responsecode.BAD_REQUEST,
+            return http.StatusResponse(http.BAD_REQUEST,
                     "Malformed XMPP URI: %s" % failure.value)
 
         self.checkMediaType(request)
-        d = self.parseXMLPayload(request.stream)
+        d = self.parseXMLPayload(request.content.read())
         d.addCallback(doPublish)
         d.addCallback(toResponse)
         d.addErrback(trapNotFound)
@@ -312,7 +313,7 @@ class ListResource(resource.Resource):
         def responseFromNodes(nodeIdentifiers):
             stream = simplejson.dumps(nodeIdentifiers)
             contentType = http_headers.MimeType.fromString(MIME_JSON)
-            return http.Response(responsecode.OK, stream=stream,
+            return http.Response(http.OK, stream=stream,
                                  headers={'Content-Type': contentType})
 
         d = self.service.getNodes()
@@ -565,11 +566,11 @@ class RemoteSubscribeBaseResource(resource.Resource):
     serviceMethod = None
     errorMap = {
             error.NodeNotFound:
-                (responsecode.FORBIDDEN, "Node not found"),
+                (http.FORBIDDEN, "Node not found"),
             error.NotSubscribed:
-                (responsecode.FORBIDDEN, "No such subscription found"),
+                (http.FORBIDDEN, "No such subscription found"),
             error.SubscriptionExists:
-                (responsecode.FORBIDDEN, "Subscription already exists"),
+                (http.FORBIDDEN, "Subscription already exists"),
     }
 
     def __init__(self, service):
@@ -587,7 +588,7 @@ class RemoteSubscribeBaseResource(resource.Resource):
             return http.StatusResponse(code, msg)
 
         def respond(result):
-            return http.Response(responsecode.NO_CONTENT)
+            return http.Response(http.NO_CONTENT)
 
         def gotRequest(result):
             uri = self.params['uri']
@@ -603,10 +604,10 @@ class RemoteSubscribeBaseResource(resource.Resource):
 
         def trapXMPPURIParseError(failure):
             failure.trap(XMPPURIParseError)
-            return http.StatusResponse(responsecode.BAD_REQUEST,
+            return http.StatusResponse(http.BAD_REQUEST,
                     "Malformed XMPP URI: %s" % failure.value)
 
-        d = readStream(request.stream, storeParams)
+        d = defer.maybeDeferred(storeParams, request.content.read())
         d.addCallback(gotRequest)
         d.addCallback(respond)
         d.addErrback(trapNotFound)
@@ -651,19 +652,19 @@ class RemoteItemsResource(resource.Resource):
         try:
             maxItems = int(request.args.get('max_items', [0])[0]) or None
         except ValueError:
-            return http.StatusResponse(responsecode.BAD_REQUEST,
+            return http.StatusResponse(http.BAD_REQUEST,
                     "The argument max_items has an invalid value.")
 
         try:
             uri = request.args['uri'][0]
         except KeyError:
-            return http.StatusResponse(responsecode.BAD_REQUEST,
+            return http.StatusResponse(http.BAD_REQUEST,
                     "No URI for the remote node provided.")
 
         try:
             jid, nodeIdentifier = getServiceAndNode(uri)
         except XMPPURIParseError:
-            return http.StatusResponse(responsecode.BAD_REQUEST,
+            return http.StatusResponse(http.BAD_REQUEST,
                     "Malformed XMPP URI: %s" % uri)
 
         def respond(items):
@@ -675,14 +676,14 @@ class RemoteItemsResource(resource.Resource):
             feed = constructFeed(jid, nodeIdentifier, atomEntries,
                                     "Retrieved item collection")
             payload = feed.toXml().encode('utf-8')
-            return http.Response(responsecode.OK, stream=payload,
+            return http.Response(http.OK, stream=payload,
                                  headers={'Content-Type': contentType})
 
         def trapNotFound(failure):
             failure.trap(StanzaError)
             if not failure.value.condition == 'item-not-found':
                 raise failure
-            return http.StatusResponse(responsecode.NOT_FOUND,
+            return http.StatusResponse(http.NOT_FOUND,
                                        "Node not found")
 
         d = self.service.items(jid, nodeIdentifier, maxItems)
@@ -733,12 +734,12 @@ class CallbackResource(resource.Resource):
 
     def http_POST(self, request):
         p = WebStreamParser()
-        if not request.headers.hasHeader('Event'):
-            d = p.parse(request.stream)
+        if not request.received_headers.has_key('Event'):
+            d = p.parse(request.content.read())
         else:
             d = defer.succeed(None)
         d.addCallback(self.callback, request.headers)
-        d.addCallback(lambda _: http.Response(responsecode.NO_CONTENT))
+        d.addCallback(lambda _: http.Response(http.NO_CONTENT))
         return d
 
 
@@ -761,7 +762,7 @@ class GatewayClient(service.Service):
 
     def startService(self):
         self.port = reactor.listenTCP(self.callbackPort,
-                                      channel.HTTPFactory(self.site))
+                                      server.Site(self.site))
 
 
     def stopService(self):
