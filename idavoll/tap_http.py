@@ -1,11 +1,11 @@
 # Copyright (c) Ralph Meijer.
 # See LICENSE for details.
 
-from twisted.application import internet, service, strports
+from twisted.application import internet, strports
 from twisted.conch import manhole, manhole_ssh
 from twisted.cred import portal, checkers
-from twisted.web2 import channel, log, resource, server
-from twisted.web2.tap import Web2Service
+
+from twisted.web import resource, server
 
 from idavoll import gateway, tap
 from idavoll.gateway import RemoteSubscriptionService
@@ -68,17 +68,17 @@ def makeService(config):
     root.child_unsubscribe = gateway.RemoteUnsubscribeResource(ss)
     root.child_items = gateway.RemoteItemsResource(ss)
 
-    if config["verbose"]:
-        root = log.LogWrapperResource(root)
+    #if config["verbose"]:
+    #    root = log.LogWrapperResource(root)
 
     site = server.Site(root)
-    w = internet.TCPServer(int(config['webport']), channel.HTTPFactory(site))
+    w = internet.TCPServer(int(config['webport']), server.Site(site))
 
-    if config["verbose"]:
-        logObserver = log.DefaultCommonAccessLoggingObserver()
-        w2s = Web2Service(logObserver)
-        w.setServiceParent(w2s)
-        w = w2s
+    #if config["verbose"]:
+    #    logObserver = log.DefaultCommonAccessLoggingObserver()
+    #    w2s = Web2Service(logObserver)
+    #    w.setServiceParent(w2s)
+    #    w = w2s
 
     w.setServiceParent(s)
 
